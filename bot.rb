@@ -179,7 +179,7 @@ loop do
       
       # Команда лабиринта (текстовая)
       if text.start_with?('лабиринт')
-        match = text.match(/(\d+)\s*[хx]\s*(\d+)/)
+        match = text.match(/(\d+)\s*[хx×]\s*(\d+)/)
         
         if match
           rows = match[1].to_i
