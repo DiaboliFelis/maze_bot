@@ -1,4 +1,3 @@
-# lib/maze_bot/client.rb
 require 'rest-client'
 require 'json'
 
