@@ -69,8 +69,10 @@ module MazeBot
     private
 
     def send_welcome(peer_id)
-      @client.send_message(peer_id, "👋 Привет! Я бот-генератор лабиринтов.\n\nСоздай лабиринт командой: лабиринт 8х8\nА потом напиши: реши")
-      @client.send_message(peer_id, "Кнопки:", @keyboard)
+      @client.send_message(peer_id, "👋 Привет! Я бот-генератор лабиринтов.\nКоманды:\n
+🏁 `лабиринт ?х?` — создать лабиринт\n
+🧭 `реши` — найти путь в последнем лабиринте\n
+📖 `помощь` — показать справку")
     end
 
     def handle_maze(peer_id, text)
@@ -194,7 +196,6 @@ module MazeBot
         *Примеры:*
         - лабиринт 10х10
         - лабиринт 15x15
-        - реши
       HELP
     end
   end
