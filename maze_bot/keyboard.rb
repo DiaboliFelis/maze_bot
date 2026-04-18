@@ -1,4 +1,3 @@
-# lib/maze_bot/keyboard.rb
 module MazeBot
   class Keyboard
     def self.default
