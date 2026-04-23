@@ -6,10 +6,15 @@
     "672464058": {
       "rows": 33,
       "cols": 33,
-      "maze": "#<TheLabyrinths::Grid:0x0000019c93db52f0>"
+      "maze": "#<TheLabyrinths::Grid:0x0000020828f9d1c0>"
     }
   },
-  "last_message_id": 474,
-  "dialogs": {},
-  "last_message_text": "33"
+  "last_message_id": 491,
+  "dialogs": {
+    "672464058": {
+      "step": "awaiting_cols",
+      "rows": 23
+    }
+  },
+  "last_message_text": "23"
 }

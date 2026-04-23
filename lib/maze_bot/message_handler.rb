@@ -254,6 +254,7 @@ end
         File.delete(filename)
 
         @dialog_manager.instance_variable_get(:@users).delete(peer_id)
+        @message_store.save_message(peer_id, "[Генерация завершена]", true)
 
       rescue => e
         puts "Ошибка генерации: #{e.message}"
