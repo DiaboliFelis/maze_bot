@@ -1,0 +1,15 @@
+{
+  "first_time_users": {
+    "672464058": true
+  },
+  "last_mazes": {
+    "672464058": {
+      "rows": 33,
+      "cols": 33,
+      "maze": "#<TheLabyrinths::Grid:0x0000019c93db52f0>"
+    }
+  },
+  "last_message_id": 474,
+  "dialogs": {},
+  "last_message_text": "33"
+}

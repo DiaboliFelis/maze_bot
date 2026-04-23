@@ -5,6 +5,12 @@ module MazeBot
         one_time: false,
         buttons: [
           [
+          {
+              action: { type: "text", label: "🏁 Создать лабиринт", payload: "{\"command\":\"maze\"}" },
+              color: "positive"
+            },
+          ],
+          [
             {
               action: { type: "text", label: "🧭 Решить лабиринт", payload: "{\"command\":\"solve\"}" },
               color: "primary"

@@ -1,16 +1,92 @@
-require 'set'
+require_relative 'dialog_manager'
+require_relative 'storage'
+require_relative 'message_store'
 
 module MazeBot
   class MessageHandler
-    attr_reader :client, :keyboard, :last_mazes
-
     def initialize(client, keyboard)
       @client = client
       @keyboard = keyboard
+      @storage = Storage.new
+      @message_store = MessageStore.new
       @last_mazes = {}
       @first_time_users = {}
       @last_message_id = 0
+      @dialog_manager = DialogManager.new
+
+      load_state
+      resume_from_history
+
+      if @last_message_text && !@last_message_text.empty?
+    puts "Обрабатываю сохранённое сообщение: #{@last_message_text}"
+    # Имитируем обработку сообщения
+    process_saved_message(@last_message_text)
+  end
     end
+
+    # восстанавливает диалог из сохранённой истории
+    def resume_from_history
+      messages = @message_store.load_all
+      return if messages.empty?
+      
+      messages.each do |peer_id, history|
+        next if history.empty?
+        
+        # Находим последнее сообщение пользователя
+        last_user_msg = history.reverse.find { |m| !m['from_bot'] }
+        next unless last_user_msg
+        
+        last_bot_msg = history.reverse.find { |m| m['from_bot'] }
+        
+        # Определяем состояние диалога
+        if last_bot_msg && last_bot_msg['text'].include?('количество рядов')
+          # Бот ждёт ряды
+          @dialog_manager.start_maze_creation(peer_id)
+          @client.send_message(peer_id, "Введите количество рядов (от 2 до 50):", @keyboard)
+          puts "Восстановлен диалог для #{peer_id}: ожидание рядов"
+          
+        elsif last_bot_msg && last_bot_msg['text'].include?('количество колонок')
+          # Бот ждёт колонки
+          rows = last_user_msg['text'].to_i
+          @dialog_manager.start_maze_creation(peer_id)
+          @dialog_manager.instance_variable_get(:@users)[peer_id][:rows] = rows
+          @dialog_manager.instance_variable_get(:@users)[peer_id][:step] = :awaiting_cols
+          @client.send_message(peer_id, "Отлично! Теперь введите количество колонок (от 2 до 50):", @keyboard)
+          puts "Восстановлен диалог для #{peer_id}: ожидание колонок (rows=#{rows})"
+          
+        elsif last_user_msg && !last_bot_msg
+          # Новый пользователь — отправляем приветствие
+          @first_time_users[peer_id] = true
+          send_welcome(peer_id)
+      
+        elsif last_bot_msg && last_bot_msg['text'].include?('Генерирую лабиринт')
+          # Последнее действие — генерация, не повторяем
+          puts "Последнее действие — генерация лабиринта, пропускаем восстановление"
+          @dialog_manager.instance_variable_get(:@users).delete(peer_id)
+
+        elsif last_bot_msg && last_bot_msg['text'].start_with?('🏁 Генерирую лабиринт')
+          # Генерация уже была — просто очищаем диалог
+          puts "Последнее действие — генерация лабиринта, очищаем диалог"
+          @dialog_manager.instance_variable_get(:@users).delete(peer_id)
+        end
+      end
+    end
+
+    def process_saved_message(text)
+  # логика обработки сообщения
+  peer_id = @dialog_manager.active_dialogs.keys.first
+  return unless peer_id
+  
+  dialog_response = @dialog_manager.process_input(peer_id, text)
+  if dialog_response
+    if dialog_response.is_a?(Hash) && dialog_response[:action] == :generate_maze
+      generate_and_send_maze(peer_id, dialog_response[:rows], dialog_response[:cols])
+    else
+      @client.send_message(peer_id, dialog_response, @keyboard)
+    end
+  end
+end
+
 
     def process_messages(messages)
       messages.each do |item|
@@ -22,30 +98,63 @@ module MazeBot
         next if message['out'] == 1
 
         text = message['text'].to_s.downcase
-        peer_id = message['peer_id']
+        peer_id = message['peer_id'].to_s.strip
+
+        # Сохраняем сообщение пользователя
+        @message_store.save_message(peer_id, text, false)
+
+        @last_message_text = text 
 
         # Приветствие
-        unless @first_time_users[peer_id]
+#         if @first_time_users[peer_id].nil?
+#           puts "DEBUG: Отправляю приветствие для #{peer_id}, first_time_users=#{@first_time_users.inspect}"
+#   @first_time_users[peer_id] = true
+#   send_welcome(peer_id)
+#   save_state
+#   next
+# end
+        if @first_time_users[peer_id].nil?
           @first_time_users[peer_id] = true
           send_welcome(peer_id)
-          next
+          save_state
         end
 
         # Обработка payload от кнопок
         if message['payload']
           payload = JSON.parse(message['payload'])
           case payload['command']
+          when 'maze'
+            response = @dialog_manager.start_maze_creation(peer_id)
+            @client.send_message(peer_id, response, @keyboard)
+            @message_store.save_message(peer_id, response, true)
+            next
           when 'solve'
             text = 'реши'
           when 'help'
-            @client.send_message(peer_id, help_text, @keyboard)
+            help_msg = help_text
+            @client.send_message(peer_id, help_msg, @keyboard)
+            @message_store.save_message(peer_id, help_msg, true)
             next
           end
+        end
+
+        # Проверяем, есть ли активный диалог
+        dialog_response = @dialog_manager.process_input(peer_id, text)
+        if dialog_response
+          if dialog_response.is_a?(Hash) && dialog_response[:action] == :generate_maze
+            generate_and_send_maze(peer_id, dialog_response[:rows], dialog_response[:cols])
+          else
+            @client.send_message(peer_id, dialog_response, @keyboard)
+            @message_store.save_message(peer_id, dialog_response, true)
+          end
+          save_state
+          next
         end
 
         # Команда помощи
         if ['помощь', 'help', 'start', 'начать'].include?(text)
           @client.send_message(peer_id, help_text, @keyboard)
+          @message_store.save_message(peer_id, help_text, true)
           next
         end
 
@@ -55,47 +164,62 @@ module MazeBot
           next
         end
 
-        # Команда лабиринта
+        # Команда лабиринта (для обратной совместимости)
         if text.start_with?('лабиринт')
-          handle_maze(peer_id, text)
+          match = text.match(/(\d+)\s*[хx×]\s*(\d+)/)
+          if match
+            rows = match[1].to_i
+            cols = match[2].to_i
+            generate_and_send_maze(peer_id, rows, cols)
+          else
+            msg = "❌ Не понял размер.\nПример: лабиринт 8х8"
+            @client.send_message(peer_id, msg, @keyboard)
+            @message_store.save_message(peer_id, msg, true)
+          end
           next
         end
 
         # Неизвестная команда
-        @client.send_message(peer_id, "❌ Неизвестная команда.\nНапиши: лабиринт 8х8 или помощь", @keyboard)
+        msg = "❌ Неизвестная команда.\nНажми на кнопки или напиши: помощь"
+        @client.send_message(peer_id, msg, @keyboard)
+        @message_store.save_message(peer_id, msg, true)
       end
+      save_state
     end
 
     private
 
-    def send_welcome(peer_id)
-      @client.send_message(peer_id, "👋 Привет! Я бот-генератор лабиринтов.\nКоманды:\n
-🏁 `лабиринт ?х?` — создать лабиринт\n
-🧭 `реши` — найти путь в последнем лабиринте\n
-📖 `помощь` — показать справку")
+    def load_state
+  data = @storage.load
+ @first_time_users = (data[:first_time_users] || {}).transform_keys(&:to_s)
+  @last_mazes = data[:last_mazes] || {}
+  @last_message_id = data[:last_message_id] || 0
+  @dialog_manager.load_state((data[:dialogs] || {}).transform_keys(&:to_sym))
+  @last_message_text = data[:last_message_text] || ""
+  
+  puts "Загружено first_time_users: #{@first_time_users.inspect}"
+  puts "Загружено dialogs: #{@dialog_manager.save_state.inspect}"
+end
+
+    def save_state
+      data = {
+        first_time_users: @first_time_users,
+        last_mazes: @last_mazes,
+        last_message_id: @last_message_id,
+        dialogs: @dialog_manager.save_state,
+        last_message_text: @last_message_text,
+      }
+      @storage.save(data)
     end
 
-    def handle_maze(peer_id, text)
-      match = text.match(/(\d+)\s*[хx×]\s*(\d+)/)
+    def send_welcome(peer_id)
+      @client.send_message(peer_id, "👋 Привет! Я бот-генератор лабиринтов.\nКоманды:\n
+🏁 `Создать лабиринт`\n
+🧭 `реши` — найти путь в последнем лабиринте\n
+📖 `помощь` — показать справку»", @keyboard)
+    end
 
-      unless match
-        @client.send_message(peer_id, "❌ Не понял размер.\nПример: лабиринт 8х8", @keyboard)
-        return
-      end
-
-      rows = match[1].to_i
-      cols = match[2].to_i
-
-      if rows < 2 || cols < 2
-        @client.send_message(peer_id, "❌ Минимальный размер — 2×2", @keyboard)
-        return
-      end
-
-      if rows > 50 || cols > 50
-        @client.send_message(peer_id, "❌ Максимальный размер — 50×50!", @keyboard)
-        return
-      end
-
+    def generate_and_send_maze(peer_id, rows, cols)
       @client.send_message(peer_id, "🏁 Генерирую лабиринт #{rows}×#{cols}...", @keyboard)
 
       begin
@@ -128,6 +252,9 @@ module MazeBot
         @client.send_photo(peer_id, attachment)
 
         File.delete(filename)
+
+        @dialog_manager.instance_variable_get(:@users).delete(peer_id)
+
       rescue => e
         puts "Ошибка генерации: #{e.message}"
         @client.send_message(peer_id, "❌ Ошибка при генерации.", @keyboard)
@@ -136,7 +263,7 @@ module MazeBot
 
     def handle_solve(peer_id)
       unless @last_mazes[peer_id]
-        @client.send_message(peer_id, "❌ Нет сохранённого лабиринта.\nСначала создай лабиринт командой: лабиринт 8х8", @keyboard)
+        @client.send_message(peer_id, "❌ Нет сохранённого лабиринта.\nСначала создай лабиринт", @keyboard)
         return
       end
 
@@ -176,8 +303,12 @@ module MazeBot
         attachment = "photo#{photo['owner_id']}_#{photo['id']}"
         @client.send_message(peer_id, "🧩 Путь найден! Длина: #{path.length} шагов", @keyboard)
         @client.send_photo(peer_id, attachment)
+        @message_store.save_message(peer_id, "[Отправлена картинка с путём]", true)
 
         File.delete(filename)
+
+        @dialog_manager.instance_variable_get(:@users).delete(peer_id)
+
       rescue => e
         puts "Ошибка поиска пути: #{e.message}"
         @client.send_message(peer_id, "❌ Ошибка при поиске пути.", @keyboard)
@@ -189,13 +320,9 @@ module MazeBot
         🧩 *Генератор лабиринтов*
 
         *Команды:*
-        🏁 `лабиринт ?х?` — создать лабиринт
-        🧭 `реши` — найти путь в последнем лабиринте
-        📖 `помощь` — показать справку
-
-        *Примеры:*
-        - лабиринт 10х10
-        - лабиринт 15x15
+        🏁 Создать лабиринт — нажми на кнопку
+        🧭 Решить лабиринт — найти путь в последнем лабиринте
+        📖 Помощь — показать справку
       HELP
     end
   end
